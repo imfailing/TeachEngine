@@ -1,0 +1,380 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD HTML 4.01//EN" SYSTEM "http://www.w3.org/TR/html4/strict.dtd"> 
+
+<html>
+
+<meta http-equiv="Content-Type" content="text/html;charset=UTF-8">
+<head>
+
+<title>Test Raphael Drawing</title> 
+
+<script type="text/javascript" src="jquery.js"></script>
+<script type="text/javascript" src="jquery-ui-1.8.13.custom.min.js"></script>
+<script type="text/javascript" src="raphael-min.js"></script>
+<script type="text/javascript" src="swfobject.js">
+<script src="http://yeswenyan.dyndns.org:8080/socket.io/socket.io.js"></script>
+
+<script type="text/javascript" src="icons.js"></script>
+<script type="text/javascript" src="raphael.json.js"></script>
+<script src="client.js"></script>
+<link type="text/css" rel="stylesheet" href="jquery-ui.css">
+<link type="text/css" rel="stylesheet" href="stylechat.css">
+
+
+<style type="text/css">
+	body, html, button,
+	.ui-widget, .ui-widget input, .ui-widget select, .ui-widget textarea, .ui-widget button,
+	.ui-widget-header, .ui-widget-content, .ui-widget-header .ui-widget-header, .ui-widget-content .ui-widget-content {
+		font-family: Trebuchet MS, Verdana, Helvetica, sans-serif !important;
+		font-size: 13px !important;
+	}
+	
+	input.ui-button {
+		padding: 0.1em 0.5em !important;
+	}
+
+	.ui-dialog {
+		width: auto !important;
+	}
+
+	#whiteboard {
+		width: auto;
+		height: auto;
+		margin: 20px;
+		border: solid 2px black;
+	}
+
+    #iconsArea {
+		margin: 10px 0px 0px 0px;
+	}
+	
+	#textArea {
+		margin: 10px 0px 0px 0px;
+		width: 400px !important;
+		height: 150px !important;
+	}
+	
+</style>
+
+</head>
+<body>
+	<div style="margin-left: 20px;">
+		<input type="button" value="Указка" onclick="switchToMode('clearMode', 'default'); restoreWhiteboard();">		
+		<input type="button" value="Маркер" onclick="switchToMode('paintMode', 'pointer');">
+		<input type="button" value="Линия" onclick="switchToMode('lineMode', 'pointer');">
+		<input type="button" value="Вставить элемент" onclick="switchToMode('objectMode', 'crosshair');">
+		<input type="button" value="Вставить текст" onclick="switchToMode('textMode', 'text');">
+		<input type="button" value="Перенос элементов" onclick="switchToMode('moveMode', 'default');">
+		<input type="button" value="Удаление элементов" onclick="switchToMode('deleteMode', 'crosshair');">
+		<input type="button" value="Очистить доску" onclick="switchToMode('clearMode', 'default'); clearWhiteboard();">
+	</div>
+
+	<div id="whiteboard"></div>
+
+
+	<div id="dialogIcons" title="Choose icon">
+		<div id="iconsArea"></div>
+	</div>
+	<div id="dialogNetobjects" title="Choose icon">
+		<div id="NetobjectsArea"></div>
+	</div>
+	<div id="dialogInputText" title="Input text">
+		<textarea id="textArea"></textarea>
+	</div>
+	<div id="dialogVideo" title="Input text">
+		<p id="container">Please install the Flash Plugin</p>
+	</div>
+	<div id="dialogChat">
+	<div id="chat"></div>
+   <input type="text" id="input" autofocus><input type="submit" id="send" value="Send">
+   </div>
+
+<script type="text/javascript">
+	// create raphael canvas
+	var room=1;
+	var whiteboard = jQuery("#whiteboard");
+	var list = Raphael("whiteboard", whiteboard.width(), whiteboard.height());
+	var json;
+	// whiteboard settings
+	var offsetLeft = whiteboard.offset().left;
+	var offsetTop = whiteboard.offset().top;
+	jQuery.extend(whiteboard, {
+		"lineEl": {"path": null, "pathArray": null},
+		"iconEl": {"cx": 0, "cy": 0},
+		"textEl": {"cx": 0, "cy": 0}
+	});
+
+	var flashvars = { streamer:'rtmp://192.168.1.200/flvplayback/',file:'test',autostart:'false',bufferlength:'0' };  var params = { allowfullscreen:'true', allowscriptaccess:'always' };
+	var attributes = { id:'player1', name:'player1' };
+	swfobject.embedSWF('player.swf','container','450','360','9.0.115','false',flashvars, params, attributes);	
+	
+	var 
+	var dialogIcons = jQuery("#dialogIcons");
+	var dialogInputText = jQuery("#dialogInputText");
+	var dialogVideo = jQuery("#dialogVideo");
+	var dialogChat = jQuery("#dialogChat");
+	var modeNow = {
+		"paintMode": false,
+		"lineMode": false,
+		"rectangleMode": false,
+		"circleMode": false,
+		"ellipseMode": false,
+		"objectMode": false,
+		"textMode": false,
+		"moveMode": false,
+		"deleteMode": false,
+		"clearMode": false
+	};
+
+	var sendChanges = function() {
+		json = list.toJSON();
+		socket.emit('whiteboard', json);
+	};
+	
+	
+	// register handlers for drag & drop on element
+	var startElement = function () {
+		if (!modeNow.moveMode) {
+			return false;
+		}
+
+		this.odx = 0;
+		this.ody = 0;
+		this.attr("cursor", "move");
+		this.element.toFront();
+		this.toFront();
+	},
+	moveElement = function (dx, dy) {
+		if (!modeNow.moveMode) {
+			return false;
+		}
+
+		this.element.translate(dx - this.odx, dy - this.ody);
+		this.translate(dx - this.odx, dy - this.ody);
+		this.odx = dx;
+		this.ody = dy;
+	},
+	stopElement = function () {
+		if (!modeNow.moveMode) {
+			return false;
+		}
+		this.attr("cursor", "default");
+		sendChanges();
+	};
+	
+	// var register hover on element
+	var chooseRectElement = function (event) {
+		if (!modeNow.moveMode && !modeNow.deleteMode) {
+			this.attr("cursor", whiteboard.css("cursor"));
+			return true;
+		}
+
+		if (modeNow.moveMode) {
+			this.attr({"stroke": "#0D0BF5", "stroke-opacity": 0.8, "fill": "#0276FD", "fill-opacity": 0.2});
+			this.attr("cursor", "move");
+		} else {
+			this.attr({"stroke": "#FF0000", "stroke-opacity": 0.8, "fill": "#FF0000", "fill-opacity": 0.2});
+			this.attr("cursor", "crosshair");
+		}
+	},
+	chooseRectOutElement = function (event) {
+		if (!modeNow.moveMode && !modeNow.deleteMode) {
+			return true;
+
+		}
+
+		this.attr({"stroke-opacity": 0, "fill-opacity": 0});
+		if (modeNow.moveMode) {
+			this.attr("cursor", "default");
+		}
+	};
+
+	// register handler for click on element
+	var clickElement = function(event) {
+		if (!modeNow.deleteMode) {
+			return false;
+		}
+
+		this.element.remove();
+		this.remove();
+		sendChanges();
+	};
+	
+	// mousedown, mousemove and mouseup handlers on whiteboard
+	var mousedownHandler = function (event) {
+		if (modeNow.paintMode) {
+			whiteboard.lineEl.path = list.path("M" + (event.pageX - offsetLeft) + "," + (event.pageY - offsetTop));
+			whiteboard.lineEl.path.attr({stroke: "#000000", "stroke-width": 3});
+			whiteboard.bind("mousemove.mmu", mousemoveHandler);
+			whiteboard.one("mouseup.mmu", mouseupHandler);
+		} else if (modeNow.lineMode) {
+			whiteboard.lineEl.pathArray = [];
+			whiteboard.lineEl.pathArray[0] = ["M", event.pageX - offsetLeft, event.pageY - offsetTop];
+			whiteboard.lineEl.path = list.path(whiteboard.lineEl.pathArray);
+			whiteboard.lineEl.path.attr({stroke: "#000000", "stroke-width": 3});
+			whiteboard.bind("mousemove.mmu", mousemoveHandler);
+			whiteboard.one("mouseup.mmu", mouseupHandler);
+		}
+
+		return false;
+	},
+	mousemoveHandler = function (event) {
+		if (modeNow.paintMode) {
+			whiteboard.lineEl.path.attr("path", whiteboard.lineEl.path.attr("path") + "L" + (event.pageX - offsetLeft) + "," + (event.pageY - offsetTop));
+		} else if (modeNow.lineMode) {
+			whiteboard.lineEl.pathArray[1] = ["L", event.pageX - offsetLeft, event.pageY - offsetTop];
+			whiteboard.lineEl.path.attr("path", whiteboard.lineEl.pathArray);
+		}
+	},
+	mouseupHandler = function () {
+		whiteboard.unbind(".mmu");
+		if (whiteboard.lineEl.path) {
+			drawChooseRect(whiteboard.lineEl.path.getBBox()).element = whiteboard.lineEl.path;
+			sendChanges();
+			whiteboard.lineEl.path = null;
+			whiteboard.lineEl.pathArray = null;
+		}
+	};
+
+	// click handler on whiteboard
+	var clickHandler = function(event) {
+		if (modeNow.objectMode) {
+			whiteboard.iconEl.cx = event.pageX - offsetLeft;
+			whiteboard.iconEl.cy = event.pageY - offsetTop;
+			dialogIcons.dialog("open");
+		} else if (modeNow.textMode) {
+			whiteboard.textEl.cx = event.pageX - offsetLeft;
+			whiteboard.textEl.cy = event.pageY - offsetTop;
+			dialogInputText.dialog("open");
+		} else {
+			return false;
+		}
+	};
+	
+	// mouseleave handler on whiteboard
+	var mouseleaveHandler = function(event) {
+		if (modeNow.paintMode || modeNow.lineMode) {
+			mouseupHandler();
+		}
+		
+		return false;
+	};
+
+	// register handlers on whiteboard
+	whiteboard.bind("click", clickHandler);
+	whiteboard.bind("mousedown", mousedownHandler);
+	whiteboard.bind("mouseleave", mouseleaveHandler);
+	
+	// make buttons
+	jQuery(":button").button();
+
+	// draw icons in the "Choose icon" dialog
+	var x = 0, y = 0;
+	var fillStroke = {fill: "#000", stroke: "none"};
+	var fiilNone = {fill: "#000", opacity: 0};
+	var fillHover = {fill: "90-#0050af-#002c62", stroke: "#FF0000"};
+	var iconlist = Raphael("iconsArea", 600, 360);
+
+	for (var name in whiteboardIcons) {
+		var currentIcon = iconlist.path(whiteboardIcons[name]).attr(fillStroke).translate(x, y);
+		currentIcon.offsetX = x + 20;
+		currentIcon.offsetY = y + 20;
+		var overlayIcon = iconlist.rect(x, y, 40, 40).attr(fiilNone);
+		overlayIcon.icon = currentIcon;
+		overlayIcon.click(function () {
+			dialogIcons.dialog("close");
+			var iconElement = list.path(this.icon.attr("path")).attr(fillStroke).translate(whiteboard.iconEl.cx , whiteboard.iconEl.cy );
+			drawChooseRect(iconElement.getBBox()).element = iconElement;
+			sendChanges();
+
+		}).hover(function () {
+			this.icon.attr(fillHover);
+		}, function () {
+			this.icon.attr(fillStroke);
+		});
+		x += 40;
+		if (x > 560) {
+			x = 0;
+			y += 40;
+		}
+	}
+
+	// prepare dialog with icons
+	dialogIcons.dialog({
+		width: 100,
+		modal: true,
+		autoOpen: false,
+		resizable: false,
+		buttons: {
+			//Close: function() {
+				//dialogIcons.dialog("close");
+			//}
+		},
+		// fix for scrollbars in IE
+		open: function(event, ui){
+			jQuery('body').css('overflow','hidden');
+			jQuery('.ui-widget-overlay').css('width','100%');
+		},
+		close: function(event, ui){
+			jQuery('body').css('overflow','auto');
+		}
+	});
+	
+	// prepare dialog for input text
+	dialogInputText.dialog({
+		modal: true,
+		autoOpen: false,
+		resizable: false,
+		buttons: {
+			Accept: function() {
+				var inputText = dialogInputText.find("#textArea").val();
+				dialogInputText.dialog("close");
+				if (inputText !== "") {
+					var textElement = list.text(whiteboard.textEl.cx, whiteboard.textEl.cy, inputText);
+					textElement.attr("font-size", "18");
+					drawChooseRect(textElement.getBBox()).element = textElement;
+					sendChanges();
+				}
+			}
+		},
+		// fix for scrollbars in IE
+		open: function(event, ui){
+			jQuery('body').css('overflow','hidden');
+			jQuery('.ui-widget-overlay').css('width','100%');
+		},
+		close: function(event, ui){
+			jQuery('body').css('overflow','auto');
+			dialogInputText.find("#textArea").val('');
+		}
+	});
+	
+	function drawChooseRect(bbox) {
+		// draw helper rectangle around the element
+		var helperRect = list.rect(bbox.x - 1, bbox.y - 1, (bbox.width !== 0 ? bbox.width + 2 : 3), (bbox.height !== 0 ? bbox.height + 2 : 3));
+		helperRect.attr({"stroke": "#0D0BF5", "stroke-width": "2", "stroke-dasharray": "-", "stroke-opacity": 0, "fill": "#0276FD", "fill-opacity": 0});
+		helperRect.hover(chooseRectElement, chooseRectOutElement);
+		helperRect.click(clickElement);
+		helperRect.drag(moveElement, startElement, stopElement);
+		return helperRect;
+	}
+	
+	function clearWhiteboard() {
+		list.clear();
+		sendChanges();
+	}
+	
+	function restoreWhiteboard() {
+		list.fromJSON(json);
+	}
+	
+	function switchToMode(mode, cursor) {
+		for (var name in modeNow) {
+			modeNow[name] = false;
+		}
+		modeNow[mode] = true;
+		whiteboard.css("cursor", cursor);
+		
+	}
+	
+</script>
+</body>
+
